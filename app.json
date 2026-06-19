@@ -1,0 +1,12 @@
+{
+  "expo": {
+    "extra": {
+      "eas": {
+        "projectId": "03655e68-52dc-4bb7-96d7-ad58655f175c"
+      }
+    },
+    "android": {
+      "package": "com.vineetsingh23.vehicle_mileage_calculator"
+    }
+  }
+}
