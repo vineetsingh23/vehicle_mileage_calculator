@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import { supabase } from './src/supabaseClient';
 
 function App() {
@@ -39,7 +39,6 @@ function App() {
   const [loadingEntries, setLoadingEntries] = useState(true);
   const [savingSettings, setSavingSettings] = useState(false);
   const [settingsMessage, setSettingsMessage] = useState('');
-  const lastSavedSettingTimestamps = useRef({});
 
   const normalizeEntry = (entry) => ({
     id: entry.id,
@@ -57,29 +56,6 @@ function App() {
   const [settingsLoading, setSettingsLoading] = useState(true);
   const [settingsLoaded, setSettingsLoaded] = useState(false);
 
-  const decodeSettingValue = (storedValue) => {
-    if (typeof storedValue !== 'string') {
-      return { value: storedValue, updatedAt: null };
-    }
-
-    try {
-      const parsed = JSON.parse(storedValue);
-      if (parsed && typeof parsed === 'object' && 'value' in parsed) {
-        return { value: parsed.value, updatedAt: parsed.updatedAt || null };
-      }
-    } catch {
-      // not JSON, fall back to raw string
-    }
-
-    return { value: storedValue, updatedAt: null };
-  };
-
-  const isServerValueNewer = (key, serverUpdatedAt) => {
-    if (!serverUpdatedAt) return true;
-    const localTimestamp = lastSavedSettingTimestamps.current[key];
-    if (!localTimestamp) return true;
-    return new Date(serverUpdatedAt) > new Date(localTimestamp);
-  };
 
   const fetchSettings = async () => {
     setSettingsLoading(true);
@@ -88,55 +64,51 @@ function App() {
     if (error) {
       console.error('Error loading settings:', error.message);
     } else if (data) {
-      const mapped = Object.fromEntries(
-        data.map((setting) => [setting.key, decodeSettingValue(setting.value)])
-      );
-
-      if (mapped.insuranceLimit && isServerValueNewer('insuranceLimit', mapped.insuranceLimit.updatedAt)) {
-        setInsuranceLimit(mapped.insuranceLimit.value);
-        if (mapped.insuranceLimit.updatedAt) lastSavedSettingTimestamps.current.insuranceLimit = mapped.insuranceLimit.updatedAt;
-      }
-      if (mapped.startOdometer && isServerValueNewer('startOdometer', mapped.startOdometer.updatedAt)) {
-        setStartOdometer(mapped.startOdometer.value);
-        if (mapped.startOdometer.updatedAt) lastSavedSettingTimestamps.current.startOdometer = mapped.startOdometer.updatedAt;
-      }
-      if (mapped.currentOdometer && isServerValueNewer('currentOdometer', mapped.currentOdometer.updatedAt)) {
-        setCurrentOdometer(mapped.currentOdometer.value);
-        if (mapped.currentOdometer.updatedAt) lastSavedSettingTimestamps.current.currentOdometer = mapped.currentOdometer.updatedAt;
-      }
-      if (mapped.startDateStr && isServerValueNewer('startDateStr', mapped.startDateStr.updatedAt)) {
-        setStartDateStr(mapped.startDateStr.value);
-        if (mapped.startDateStr.updatedAt) lastSavedSettingTimestamps.current.startDateStr = mapped.startDateStr.updatedAt;
-      }
+      const mapped = Object.fromEntries(data.map((setting) => [setting.key, setting.value]));
+      if (mapped.insuranceLimit) setInsuranceLimit(mapped.insuranceLimit);
+      if (mapped.startOdometer) setStartOdometer(mapped.startOdometer);
+      if (mapped.startDateStr) setStartDateStr(mapped.startDateStr);
     }
 
     setSettingsLoading(false);
     setSettingsLoaded(true);
   };
 
-  const encodeSettingValue = (value, timestamp) => JSON.stringify({ value, updatedAt: timestamp });
+  const fetchLatestOdometer = async () => {
+    const { data, error } = await supabase
+      .from('latest_odometer_readings')
+      .select('odometer')
+      .eq('id', 1)
+      .single();
 
-  const upsertSetting = async (key, value) => {
-    const timestamp = new Date().toISOString();
-    const encodedValue = encodeSettingValue(value, timestamp);
-    const { error } = await supabase.from('app_settings').upsert({ key, value: encodedValue }, { onConflict: 'key' });
-    if (error) {
-      console.error('Error saving setting', key, error.message);
-      return false;
+    if (error && error.code !== 'PGRST116') {
+      console.error('Error loading latest odometer:', error.message || error);
+      return;
     }
-    lastSavedSettingTimestamps.current[key] = timestamp;
-    return true;
+
+    if (data) {
+      setCurrentOdometer(String(data.odometer));
+    }
   };
 
-  const handleSaveCurrentOdometer = async () => {
+  const saveLatestOdometer = async () => {
     setSavingSettings(true);
     setSettingsMessage('');
 
-    const saved = await upsertSetting('currentOdometer', currentOdometer);
-    if (saved) {
-      setSettingsMessage('Current odometer saved to Supabase.');
-    } else {
+    const { error } = await supabase.from('latest_odometer_readings').upsert(
+      {
+        id: 1,
+        odometer: currentOdometer,
+        updated_at: new Date().toISOString()
+      },
+      { onConflict: 'id' }
+    );
+
+    if (error) {
+      console.error('Error saving latest odometer:', error.message);
       setSettingsMessage('Failed to save current odometer to Supabase.');
+    } else {
+      setSettingsMessage('Current odometer saved to Supabase.');
     }
 
     setSavingSettings(false);
@@ -161,6 +133,7 @@ function App() {
   useEffect(() => {
     fetchSettings();
     fetchEntries();
+    fetchLatestOdometer();
   }, []);
 
   useEffect(() => {
@@ -191,7 +164,20 @@ function App() {
   }, []);
 
   useEffect(() => {
-    const interval = setInterval(fetchSettings, 15000);
+    const channel = supabase.channel('latest_odometer_changes');
+
+    const subscription = channel
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'latest_odometer_readings' }, fetchLatestOdometer)
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'latest_odometer_readings' }, fetchLatestOdometer)
+      .subscribe();
+
+    return () => {
+      channel.unsubscribe();
+    };
+  }, []);
+
+  useEffect(() => {
+    const interval = setInterval(fetchLatestOdometer, 15000);
     return () => clearInterval(interval);
   }, []);
 
@@ -523,7 +509,7 @@ function App() {
             <button
               type="button"
               className="primary-button"
-              onClick={handleSaveCurrentOdometer}
+              onClick={saveLatestOdometer}
               disabled={savingSettings}
             >
               {savingSettings ? 'Saving...' : 'Save Current Odometer'}
