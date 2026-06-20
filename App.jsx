@@ -74,6 +74,15 @@ function App() {
     setSettingsLoaded(true);
   };
 
+  const upsertSetting = async (key, value) => {
+    const { error } = await supabase.from('app_settings').upsert({ key, value }, { onConflict: 'key' });
+    if (error) {
+      console.error('Error saving setting', key, error.message);
+      return false;
+    }
+    return true;
+  };
+
   const fetchLatestOdometer = async () => {
     const { data, error } = await supabase
       .from('latest_odometer_readings')
