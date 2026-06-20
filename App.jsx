@@ -113,14 +113,32 @@ function App() {
 
     console.log('Saving latest odometer', odometerValue);
 
-    const { error } = await supabase.from('latest_odometer_readings').upsert(
-      {
-        id: 1,
-        odometer: odometerValue,
-        updated_at: new Date().toISOString()
-      },
-      { onConflict: 'id' }
-    );
+    const { data: existing, error: selectError } = await supabase
+      .from('latest_odometer_readings')
+      .select('id')
+      .eq('id', 1)
+      .single();
+
+    if (selectError && selectError.code !== 'PGRST116') {
+      console.error('Error checking latest odometer row:', selectError);
+      setSettingsMessage(`Failed to save current odometer: ${selectError.message || JSON.stringify(selectError)}`);
+      setSavingSettings(false);
+      return;
+    }
+
+    let error;
+    if (existing) {
+      const updateResult = await supabase
+        .from('latest_odometer_readings')
+        .update({ odometer: odometerValue, updated_at: new Date().toISOString() })
+        .eq('id', 1);
+      error = updateResult.error;
+    } else {
+      const insertResult = await supabase.from('latest_odometer_readings').insert([
+        { id: 1, odometer: odometerValue, updated_at: new Date().toISOString() }
+      ]);
+      error = insertResult.error;
+    }
 
     if (error) {
       console.error('Error saving latest odometer:', error);
