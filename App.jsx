@@ -37,6 +37,8 @@ function App() {
   const [submitting, setSubmitting] = useState(false);
   const [submitMessage, setSubmitMessage] = useState('');
   const [loadingEntries, setLoadingEntries] = useState(true);
+  const [savingSettings, setSavingSettings] = useState(false);
+  const [settingsMessage, setSettingsMessage] = useState('');
 
   const normalizeEntry = (entry) => ({
     id: entry.id,
@@ -76,7 +78,23 @@ function App() {
     const { error } = await supabase.from('app_settings').upsert({ key, value }, { onConflict: 'key' });
     if (error) {
       console.error('Error saving setting', key, error.message);
+      return false;
     }
+    return true;
+  };
+
+  const handleSaveCurrentOdometer = async () => {
+    setSavingSettings(true);
+    setSettingsMessage('');
+
+    const saved = await upsertSetting('currentOdometer', currentOdometer);
+    if (saved) {
+      setSettingsMessage('Current odometer saved to Supabase.');
+    } else {
+      setSettingsMessage('Failed to save current odometer to Supabase.');
+    }
+
+    setSavingSettings(false);
   };
 
   const fetchEntries = async () => {
@@ -462,6 +480,17 @@ function App() {
             />
           </label>
 
+          <div className="form-actions">
+            <button
+              type="button"
+              className="primary-button"
+              onClick={handleSaveCurrentOdometer}
+              disabled={savingSettings}
+            >
+              {savingSettings ? 'Saving...' : 'Save Current Odometer'}
+            </button>
+          </div>
+
           <label className="input-group">
             <span>Start Date</span>
             <input
@@ -480,6 +509,8 @@ function App() {
             </article>
           ))}
         </div>
+
+        {settingsMessage && <p className="submit-message">{settingsMessage}</p>}
       </section>
 
       <section className="refuel-panel">
