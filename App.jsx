@@ -116,6 +116,23 @@ function App() {
   }, []);
 
   useEffect(() => {
+    const channel = supabase
+      .channel('app_settings_changes')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'app_settings' },
+        () => {
+          fetchSettings();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      channel.unsubscribe();
+    };
+  }, []);
+
+  useEffect(() => {
     if (typeof window === 'undefined') return;
     window.localStorage.setItem('refuelDate', refuelDate);
     window.localStorage.setItem('refuelOdometer', refuelOdometer);
