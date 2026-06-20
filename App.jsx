@@ -126,24 +126,24 @@ function App() {
       return;
     }
 
-    let error;
+    let result;
     if (existing) {
-      const updateResult = await supabase
+      result = await supabase
         .from('latest_odometer_readings')
         .update({ odometer: odometerValue, updated_at: new Date().toISOString() })
-        .eq('id', 1);
-      error = updateResult.error;
+        .eq('id', 1)
+        .select();
     } else {
-      const insertResult = await supabase.from('latest_odometer_readings').insert([
+      result = await supabase.from('latest_odometer_readings').insert([
         { id: 1, odometer: odometerValue, updated_at: new Date().toISOString() }
-      ]);
-      error = insertResult.error;
+      ]).select();
     }
 
-    if (error) {
-      console.error('Error saving latest odometer:', error);
-      setSettingsMessage(`Failed to save current odometer: ${error.message || JSON.stringify(error)}`);
+    if (result.error) {
+      console.error('Error saving latest odometer:', result.error);
+      setSettingsMessage(`Failed to save current odometer: ${result.error.message || JSON.stringify(result.error)}`);
     } else {
+      console.log('Save result data:', result.data);
       setSettingsMessage('Current odometer saved to Supabase.');
       await fetchLatestOdometer();
     }
