@@ -604,7 +604,7 @@ function App() {
           <h2>Usage tips</h2>
           <ul>
             <li>Check your odometer often to keep the tracker accurate.</li>
-            <li>Compare your driven kilometers to your insurance limit regularly.</li>
+            <li>Compare your driven kilometers to your insurance limit regularly .</li>
             <li>Use the remaining balance to plan trips and avoid penalty charges.</li>
           </ul>
         </div>
