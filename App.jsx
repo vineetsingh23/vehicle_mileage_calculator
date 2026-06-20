@@ -119,15 +119,12 @@ function App() {
   }, []);
 
   useEffect(() => {
-    const channel = supabase
-      .channel('refuel_entries_changes')
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'refuel_entries' },
-        () => {
-          fetchEntries();
-        }
-      )
+    const channel = supabase.channel('refuel_entries_changes');
+
+    const subscription = channel
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'refuel_entries' }, fetchEntries)
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'refuel_entries' }, fetchEntries)
+      .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'refuel_entries' }, fetchEntries)
       .subscribe();
 
     return () => {
@@ -136,20 +133,21 @@ function App() {
   }, []);
 
   useEffect(() => {
-    const channel = supabase
-      .channel('app_settings_changes')
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'app_settings' },
-        () => {
-          fetchSettings();
-        }
-      )
+    const channel = supabase.channel('app_settings_changes');
+
+    const subscription = channel
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'app_settings' }, fetchSettings)
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'app_settings' }, fetchSettings)
       .subscribe();
 
     return () => {
       channel.unsubscribe();
     };
+  }, []);
+
+  useEffect(() => {
+    const interval = setInterval(fetchSettings, 15000);
+    return () => clearInterval(interval);
   }, []);
 
   useEffect(() => {
