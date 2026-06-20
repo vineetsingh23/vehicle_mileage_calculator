@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { supabase } from './src/supabaseClient';
 
 function App() {
   const [insuranceLimit, setInsuranceLimit] = useState('5000');
@@ -30,18 +31,89 @@ function App() {
     if (typeof window === 'undefined') return '40';
     return window.localStorage.getItem('fuelQuantity') || '40';
   });
-  const [savedEntries, setSavedEntries] = useState(() => {
-    if (typeof window === 'undefined') return [];
-    const stored = window.localStorage.getItem('savedRefuelEntries');
-    return stored ? JSON.parse(stored) : [];
-  });
+  const [savedEntries, setSavedEntries] = useState([]);
+  const [editingId, setEditingId] = useState(null);
   const [editingIndex, setEditingIndex] = useState(null);
+  const [submitting, setSubmitting] = useState(false);
   const [submitMessage, setSubmitMessage] = useState('');
+  const [loadingEntries, setLoadingEntries] = useState(true);
+
+  const normalizeEntry = (entry) => ({
+    id: entry.id,
+    refuelDate: entry.refuel_date,
+    refuelOdometer: entry.refuel_odometer,
+    fuelPrice: entry.fuel_price,
+    fuelQuantity: entry.fuel_quantity,
+    totalFuelPrice: entry.total_fuel_price,
+    distanceSinceRefuel: entry.distance_since_refuel,
+    mileage: entry.mileage,
+    costPerKm: entry.cost_per_km,
+    createdAt: entry.created_at
+  });
+
+  const [settingsLoading, setSettingsLoading] = useState(true);
+
+  const fetchSettings = async () => {
+    setSettingsLoading(true);
+    const { data, error } = await supabase.from('app_settings').select('key, value');
+
+    if (error) {
+      console.error('Error loading settings:', error.message);
+    } else if (data) {
+      const mapped = Object.fromEntries(data.map((setting) => [setting.key, setting.value]));
+      if (mapped.insuranceLimit) setInsuranceLimit(mapped.insuranceLimit);
+      if (mapped.startOdometer) setStartOdometer(mapped.startOdometer);
+      if (mapped.currentOdometer) setCurrentOdometer(mapped.currentOdometer);
+      if (mapped.startDateStr) setStartDateStr(mapped.startDateStr);
+    }
+
+    setSettingsLoading(false);
+  };
+
+  const upsertSetting = async (key, value) => {
+    const { error } = await supabase.from('app_settings').upsert({ key, value }, { onConflict: 'key' });
+    if (error) {
+      console.error('Error saving setting', key, error.message);
+    }
+  };
+
+  const fetchEntries = async () => {
+    setLoadingEntries(true);
+    const { data, error } = await supabase
+      .from('refuel_entries')
+      .select('*')
+      .order('created_at', { ascending: true });
+
+    if (error) {
+      console.error('Error loading entries:', error.message);
+    } else if (data) {
+      setSavedEntries(data.map(normalizeEntry));
+    }
+
+    setLoadingEntries(false);
+  };
 
   useEffect(() => {
-    if (typeof window === 'undefined') return;
-    window.localStorage.setItem('savedRefuelEntries', JSON.stringify(savedEntries));
-  }, [savedEntries]);
+    fetchSettings();
+    fetchEntries();
+  }, []);
+
+  useEffect(() => {
+    const channel = supabase
+      .channel('refuel_entries_changes')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'refuel_entries' },
+        () => {
+          fetchEntries();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      channel.unsubscribe();
+    };
+  }, []);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -55,6 +127,22 @@ function App() {
     if (typeof window === 'undefined') return;
     window.localStorage.setItem('currentOdometer', currentOdometer);
   }, [currentOdometer]);
+
+  useEffect(() => {
+    upsertSetting('insuranceLimit', insuranceLimit);
+  }, [insuranceLimit]);
+
+  useEffect(() => {
+    upsertSetting('startOdometer', startOdometer);
+  }, [startOdometer]);
+
+  useEffect(() => {
+    upsertSetting('currentOdometer', currentOdometer);
+  }, [currentOdometer]);
+
+  useEffect(() => {
+    upsertSetting('startDateStr', startDateStr);
+  }, [startDateStr]);
 
   useEffect(() => {
     const start = new Date(startDateStr);
@@ -98,8 +186,67 @@ function App() {
   const averageMileageTillDate = totalFuelConsumed > 0 ? overallDistance / totalFuelConsumed : 0;
   const costPerKmTillDate = overallDistance > 0 ? totalFuelCost / overallDistance : 0;
 
-  const handleRefuelSubmit = (event) => {
+  const insertEntry = async (entry) => {
+    const { data, error } = await supabase.from('refuel_entries').insert([
+      {
+        refuel_date: entry.refuelDate,
+        refuel_odometer: entry.refuelOdometer,
+        fuel_price: entry.fuelPrice,
+        fuel_quantity: entry.fuelQuantity,
+        total_fuel_price: entry.totalFuelPrice,
+        distance_since_refuel: entry.distanceSinceRefuel,
+        mileage: entry.mileage,
+        cost_per_km: entry.costPerKm
+      }
+    ]).select();
+
+    if (error) {
+      console.error('Insert error:', error);
+      setSubmitMessage(`Failed to save entry: ${error.message}`);
+      return null;
+    }
+
+    return data?.[0] ? normalizeEntry(data[0]) : null;
+  };
+
+  const updateEntry = async (id, entry) => {
+    const { data, error } = await supabase
+      .from('refuel_entries')
+      .update({
+        refuel_date: entry.refuelDate,
+        refuel_odometer: entry.refuelOdometer,
+        fuel_price: entry.fuelPrice,
+        fuel_quantity: entry.fuelQuantity,
+        total_fuel_price: entry.totalFuelPrice,
+        distance_since_refuel: entry.distanceSinceRefuel,
+        mileage: entry.mileage,
+        cost_per_km: entry.costPerKm
+      })
+      .eq('id', id)
+      .single();
+
+    if (error) {
+      console.error('Update error:', error);
+      setSubmitMessage(`Failed to update entry: ${error.message}`);
+      return null;
+    }
+
+    return normalizeEntry(data);
+  };
+
+  const deleteEntryById = async (id) => {
+    const { error } = await supabase.from('refuel_entries').delete().eq('id', id);
+    if (error) {
+      console.error('Delete error:', error);
+      setSubmitMessage(`Failed to delete entry: ${error.message}`);
+      return false;
+    }
+    return true;
+  };
+
+  const handleRefuelSubmit = async (event) => {
     event.preventDefault();
+    if (submitting) return;
 
     const newEntry = {
       refuelDate,
@@ -112,17 +259,44 @@ function App() {
       costPerKm: costPerKm.toFixed(2)
     };
 
-    if (editingIndex !== null) {
-      setSavedEntries((prevEntries) => {
-        const nextEntries = [...prevEntries];
-        nextEntries[editingIndex] = newEntry;
-        return nextEntries;
-      });
-      setSubmitMessage('Refuel entry updated successfully.');
-      setEditingIndex(null);
-    } else {
-      setSavedEntries((prevEntries) => [...prevEntries, newEntry]);
-      setSubmitMessage('Refuel entry saved successfully.');
+    setSubmitting(true);
+    setSubmitMessage('');
+
+    try {
+      if (editingId) {
+        const updated = await updateEntry(editingId, newEntry);
+        if (updated) {
+          setSavedEntries((prevEntries) => prevEntries.map((entry) => (entry.id === editingId ? updated : entry)));
+          setSubmitMessage('Refuel entry updated successfully.');
+          setEditingId(null);
+          setEditingIndex(null);
+          await fetchEntries();
+        }
+      } else {
+        const duplicateQuery = await supabase
+          .from('refuel_entries')
+          .select('id')
+          .match({
+            refuel_date: newEntry.refuelDate,
+            refuel_odometer: newEntry.refuelOdometer,
+            fuel_price: newEntry.fuelPrice,
+            fuel_quantity: newEntry.fuelQuantity
+          });
+
+        if (duplicateQuery.data?.length > 0) {
+          setSubmitMessage('Duplicate entry detected. No new row was saved.');
+          return;
+        }
+
+        const inserted = await insertEntry(newEntry);
+        if (inserted) {
+          setSavedEntries((prevEntries) => [...prevEntries, inserted]);
+          setSubmitMessage('Refuel entry saved successfully.');
+          await fetchEntries();
+        }
+      }
+    } finally {
+      setSubmitting(false);
     }
   };
 
@@ -132,43 +306,57 @@ function App() {
     setRefuelOdometer(entry.refuelOdometer);
     setFuelPrice(entry.fuelPrice);
     setFuelQuantity(entry.fuelQuantity);
+    setEditingId(entry.id);
     setEditingIndex(index);
     setSubmitMessage('Editing saved refuel entry. Make changes and save.');
   };
 
-  const handleDeleteEntry = (index) => {
-    setSavedEntries((prevEntries) => prevEntries.filter((_, idx) => idx !== index));
-    if (editingIndex === index) {
+  const handleDeleteEntry = async (index) => {
+    const entry = savedEntries[index];
+    if (!entry?.id) return;
+
+    const deleted = await deleteEntryById(entry.id);
+    if (deleted) {
+      setEditingId(null);
       setEditingIndex(null);
-      setSubmitMessage('Edit cancelled because entry was deleted.');
+      setSubmitMessage('Entry deleted successfully.');
+      await fetchEntries();
     }
   };
 
-  const handleUpdateWithCurrentOdometer = (index) => {
-    setSavedEntries((prevEntries) => {
-      return prevEntries.map((entry, idx) => {
-        if (idx !== index) return entry;
-        const currentOdo = parseFloat(currentOdometer) || 0;
-        const refuelOdo = parseFloat(entry.refuelOdometer) || 0;
-        const quantity = parseFloat(entry.fuelQuantity) || 0;
-        const totalPrice = parseFloat(entry.totalFuelPrice) || 0;
-        const newDistance = Math.max(0, currentOdo - refuelOdo);
-        const newMileage = quantity > 0 ? newDistance / quantity : 0;
-        const newCostPerKm = newDistance > 0 ? totalPrice / newDistance : 0;
+  const handleUpdateWithCurrentOdometer = async (index) => {
+    const entry = savedEntries[index];
+    if (!entry?.id) return;
 
-        return {
-          ...entry,
-          distanceSinceRefuel: newDistance.toFixed(1),
-          mileage: newMileage.toFixed(2),
-          costPerKm: newCostPerKm.toFixed(2)
-        };
-      });
-    });
+    const currentOdo = parseFloat(currentOdometer) || 0;
+    const refuelOdo = parseFloat(entry.refuelOdometer) || 0;
+    const quantity = parseFloat(entry.fuelQuantity) || 0;
+    const totalPrice = parseFloat(entry.totalFuelPrice) || 0;
+    const newDistance = Math.max(0, currentOdo - refuelOdo);
+    const newMileage = quantity > 0 ? newDistance / quantity : 0;
+    const newCostPerKm = newDistance > 0 ? totalPrice / newDistance : 0;
 
-    setSubmitMessage('Saved entry updated with current odometer reading.');
+    const updatedEntry = {
+      ...entry,
+      refuelDate: entry.refuelDate,
+      refuelOdometer: entry.refuelOdometer,
+      fuelPrice: entry.fuelPrice,
+      fuelQuantity: entry.fuelQuantity,
+      totalFuelPrice: entry.totalFuelPrice,
+      distanceSinceRefuel: newDistance.toFixed(1),
+      mileage: newMileage.toFixed(2),
+      costPerKm: newCostPerKm.toFixed(2)
+    };
+
+    const updated = await updateEntry(entry.id, updatedEntry);
+    if (updated) {
+      setSavedEntries((prevEntries) => prevEntries.map((item, idx) => (idx === index ? updated : item)));
+      setSubmitMessage('Saved entry updated with current odometer reading.');
+    }
   };
 
   const cancelEdit = () => {
+    setEditingId(null);
     setEditingIndex(null);
     setSubmitMessage('Edit cancelled.');
   };
@@ -181,8 +369,8 @@ function App() {
     { label: 'Total Running Limit Till Date', value: `${totalRunningLimitTillDate.toFixed(2)} km`, variant: 'muted' },
     { label: 'Excess of Limit', value: `${excessLimit.toFixed(1)} km`, variant: excessLimit > 0 ? 'positive' : 'muted' },
     { label: 'Short of Limit', value: `${shortOfLimit.toFixed(1)} km`, variant: shortOfLimit > 0 ? 'negative' : 'muted' },
-    { label: 'Avg Mileage to Date', value: savedEntries.length > 0 ? `${averageMileageTillDate.toFixed(2)} km/L` : '—', variant: 'muted' },
-    { label: 'Cost per km to Date', value: savedEntries.length > 0 ? `₹${costPerKmTillDate.toFixed(2)}` : '—', variant: 'muted' },
+    { label: 'Avg Mileage till Date', value: savedEntries.length > 0 ? `${averageMileageTillDate.toFixed(2)} km/L` : '—', variant: 'muted' },
+    { label: 'Cost per km till Date', value: savedEntries.length > 0 ? `₹${costPerKmTillDate.toFixed(2)}` : '—', variant: 'muted' },
     {
       label: 'Remaining Allowance',
       value: `${remainingKm.toFixed(1)} km`,
@@ -334,8 +522,8 @@ function App() {
           </label>
 
           <div className="form-actions">
-            <button className="primary-button" type="submit">
-              {editingIndex !== null ? 'Update Entry' : 'Save Refuel'}
+            <button className="primary-button" type="submit" disabled={submitting}>
+              {submitting ? 'Saving...' : editingIndex !== null ? 'Update Refuel Entries' : 'Save Refuel Entries'}
             </button>
             {editingIndex !== null && (
               <button className="secondary-button" type="button" onClick={cancelEdit}>
@@ -380,7 +568,7 @@ function App() {
                 </thead>
                 <tbody>
                   {savedEntries.map((entry, index) => (
-                    <tr key={`${entry.refuelDate}-${index}`}>
+                    <tr key={entry.id}>
                       <td>{entry.refuelDate}</td>
                       <td>{entry.refuelOdometer} km</td>
                       <td>₹{parseFloat(entry.fuelPrice).toFixed(2)}</td>

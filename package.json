@@ -12,7 +12,12 @@
     "type": "git",
     "url": "git+https://github.com/vineetsingh23/vehicle_mileage_calculator.git"
   },
-  "keywords": ["react", "vite", "mileage", "tracker"],
+  "keywords": [
+    "react",
+    "vite",
+    "mileage",
+    "tracker"
+  ],
   "author": "",
   "license": "ISC",
   "bugs": {
@@ -20,6 +25,7 @@
   },
   "homepage": "https://github.com/vineetsingh23/vehicle_mileage_calculator#readme",
   "dependencies": {
+    "@supabase/supabase-js": "^2.108.2",
     "react": "^19.2.7",
     "react-dom": "^19.2.7"
   },
