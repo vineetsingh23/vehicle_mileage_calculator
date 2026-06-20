@@ -52,6 +52,7 @@ function App() {
   });
 
   const [settingsLoading, setSettingsLoading] = useState(true);
+  const [settingsLoaded, setSettingsLoaded] = useState(false);
 
   const fetchSettings = async () => {
     setSettingsLoading(true);
@@ -68,6 +69,7 @@ function App() {
     }
 
     setSettingsLoading(false);
+    setSettingsLoaded(true);
   };
 
   const upsertSetting = async (key, value) => {
@@ -146,20 +148,24 @@ function App() {
   }, [currentOdometer]);
 
   useEffect(() => {
+    if (!settingsLoaded) return;
     upsertSetting('insuranceLimit', insuranceLimit);
-  }, [insuranceLimit]);
+  }, [insuranceLimit, settingsLoaded]);
 
   useEffect(() => {
+    if (!settingsLoaded) return;
     upsertSetting('startOdometer', startOdometer);
-  }, [startOdometer]);
+  }, [startOdometer, settingsLoaded]);
 
   useEffect(() => {
+    if (!settingsLoaded) return;
     upsertSetting('currentOdometer', currentOdometer);
-  }, [currentOdometer]);
+  }, [currentOdometer, settingsLoaded]);
 
   useEffect(() => {
+    if (!settingsLoaded) return;
     upsertSetting('startDateStr', startDateStr);
-  }, [startDateStr]);
+  }, [startDateStr, settingsLoaded]);
 
   useEffect(() => {
     const start = new Date(startDateStr);
