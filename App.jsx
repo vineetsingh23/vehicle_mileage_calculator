@@ -104,20 +104,30 @@ function App() {
     setSavingSettings(true);
     setSettingsMessage('');
 
+    const odometerValue = parseFloat(currentOdometer);
+    if (Number.isNaN(odometerValue)) {
+      setSettingsMessage('Enter a valid numeric odometer before saving.');
+      setSavingSettings(false);
+      return;
+    }
+
+    console.log('Saving latest odometer', odometerValue);
+
     const { error } = await supabase.from('latest_odometer_readings').upsert(
       {
         id: 1,
-        odometer: currentOdometer,
+        odometer: odometerValue,
         updated_at: new Date().toISOString()
       },
       { onConflict: 'id' }
     );
 
     if (error) {
-      console.error('Error saving latest odometer:', error.message);
-      setSettingsMessage('Failed to save current odometer to Supabase.');
+      console.error('Error saving latest odometer:', error);
+      setSettingsMessage(`Failed to save current odometer: ${error.message || JSON.stringify(error)}`);
     } else {
       setSettingsMessage('Current odometer saved to Supabase.');
+      await fetchLatestOdometer();
     }
 
     setSavingSettings(false);
